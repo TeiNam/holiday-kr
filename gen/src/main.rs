@@ -3,7 +3,7 @@
 //! 사용: `DATA_GO_KR_SERVICE_KEY=<디코딩 키> cargo run -p gen`
 //! 모든 연도를 받은 뒤에만 파일을 쓰므로, 호출이 하나라도 실패하면 기존 데이터는 그대로 남는다.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -15,6 +15,11 @@ const START_YEAR: u16 = 2004;
 const MAX_YEARS_AHEAD: u16 = 5;
 /// 연도 전체 공휴일은 수십 건이라 페이징 불필요
 const NUM_OF_ROWS: &str = "100";
+/// data.go.kr 가 가끔 응답 없이 연결을 붙잡고 있어서, 요청마다 상한을 둔다
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// 일시적 무응답·오류 대비 연도별 최대 시도 횟수
+const MAX_ATTEMPTS: u32 = 3;
+const RETRY_DELAY: Duration = Duration::from_secs(2);
 
 /// 공공 API 명칭 → 저장용 명칭. 부분 치환이라 "대체공휴일(노동절)" 도 함께 바뀐다.
 /// 1월 1일은 연도에 따라 "신정"/"1월1일" 로 섞여 와서 "1월1일" 로 통일한다.
@@ -98,8 +103,9 @@ fn parse_body(body: &str) -> Result<Vec<Row>, String> {
     Ok(rows)
 }
 
-fn fetch_year(key: &str, year: u16) -> Result<Vec<Row>, String> {
-    let body = ureq::get(API_URL)
+fn fetch_year(agent: &ureq::Agent, key: &str, year: u16) -> Result<Vec<Row>, String> {
+    let body = agent
+        .get(API_URL)
         .query("serviceKey", key)
         .query("solYear", year.to_string())
         .query("numOfRows", NUM_OF_ROWS)
@@ -111,6 +117,18 @@ fn fetch_year(key: &str, year: u16) -> Result<Vec<Row>, String> {
         .read_to_string()
         .map_err(|e| format!("{year}년 응답 읽기 실패: {}", short_error(&e)))?;
     parse_body(&body).map_err(|e| format!("{year}년: {e}"))
+}
+
+/// 마지막 시도 전까지는 실패를 로그만 남기고 다시 시도한다.
+fn with_retry<T>(mut f: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    for attempt in 1..MAX_ATTEMPTS {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) => eprintln!("{e} — 재시도 ({attempt}/{})", MAX_ATTEMPTS - 1),
+        }
+        std::thread::sleep(RETRY_DELAY);
+    }
+    f()
 }
 
 fn short_error(e: &ureq::Error) -> String {
@@ -134,9 +152,13 @@ fn current_year() -> u16 {
 /// 올해까지는 빈 연도가 있으면 실패, 미래 연도는 첫 빈 연도에서 멈춘다.
 fn fetch_all(key: &str) -> Result<Vec<Row>, String> {
     let this_year = current_year();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(REQUEST_TIMEOUT))
+        .build()
+        .into();
     let mut rows = Vec::new();
     for year in START_YEAR..=this_year + MAX_YEARS_AHEAD {
-        let year_rows = fetch_year(key, year)?;
+        let year_rows = with_retry(|| fetch_year(&agent, key, year))?;
         eprintln!("{year}: {}건", year_rows.len());
         if year_rows.is_empty() {
             if year <= this_year {
@@ -191,6 +213,27 @@ fn main() -> Result<(), String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn retries_until_success_and_gives_up_after_max_attempts() {
+        let mut calls = 0;
+        let ok = with_retry(|| {
+            calls += 1;
+            if calls < 2 {
+                Err("일시 오류".to_string())
+            } else {
+                Ok(calls)
+            }
+        });
+        assert_eq!(ok, Ok(2));
+
+        let mut fails = 0;
+        let err: Result<(), String> = with_retry(|| {
+            fails += 1;
+            Err(format!("실패 {fails}"))
+        });
+        assert_eq!(err, Err(format!("실패 {MAX_ATTEMPTS}")));
+    }
 
     #[test]
     fn normalizes_names() {
