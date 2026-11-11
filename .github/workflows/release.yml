@@ -1,0 +1,44 @@
+# main 의 Cargo.toml 버전이 crates.io 에 아직 없으면 배포하고, GitHub Release(태그)를 만든다.
+# crates.io Trusted Publishing(OIDC) 을 쓰므로 토큰 시크릿이 필요 없다.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check version state
+        id: ver
+        run: |
+          v=$(cargo pkgid -p holiday-kr | sed 's/.*[#@]//')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -A "holiday-kr-release (github.com/${{ github.repository }})" \
+            "https://crates.io/api/v1/crates/holiday-kr/$v")
+          [ "$code" = 200 ] && echo "published=true" >> "$GITHUB_OUTPUT" || echo "published=false" >> "$GITHUB_OUTPUT"
+          git rev-parse -q --verify "refs/tags/v$v" >/dev/null && echo "tagged=true" >> "$GITHUB_OUTPUT" || echo "tagged=false" >> "$GITHUB_OUTPUT"
+      - if: steps.ver.outputs.published == 'false'
+        run: cargo test --workspace
+      - if: steps.ver.outputs.published == 'false'
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - if: steps.ver.outputs.published == 'false'
+        run: cargo publish -p holiday-kr
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      - if: steps.ver.outputs.tagged == 'false'
+        run: gh release create "v${{ steps.ver.outputs.version }}" --target "$GITHUB_SHA" --title "v${{ steps.ver.outputs.version }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

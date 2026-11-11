@@ -1,4 +1,5 @@
-# 매주 data.go.kr 에서 공휴일을 다시 받아, 바뀐 게 있으면 PR 을 연다 (임시공휴일 반영용).
+# 매주 data.go.kr 에서 공휴일을 다시 받아, 바뀐 게 있으면 패치 버전을 올린 PR 을 연다 (임시공휴일 반영용).
+# PR 을 머지하면 release.yml 이 crates.io 에 배포한다.
 name: Update holiday data
 
 on:
@@ -20,12 +21,31 @@ jobs:
         env:
           DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         run: cargo run -p gen
+      - name: Bump patch version and changelog if data changed
+        id: bump
+        run: |
+          if git diff --quiet src/data.rs; then
+            echo "데이터 변경 없음"
+            exit 0
+          fi
+          old=$(cargo pkgid -p holiday-kr | sed 's/.*[#@]//')
+          IFS=. read -r major minor patch <<< "$old"
+          new="$major.$minor.$((patch + 1))"
+          sed -i "0,/^version = \"$old\"/s//version = \"$new\"/" Cargo.toml
+          # 첫 번째 "## [" 섹션 앞에 새 항목 삽입
+          awk -v v="$new" -v d="$(TZ=Asia/Seoul date +%F)" \
+            '!done && /^## \[/ { print "## [" v "] - " d "\n\n- 공휴일 데이터 갱신 (data.go.kr 특일 정보)\n"; done=1 } { print }' \
+            CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          echo "version=$new" >> "$GITHUB_OUTPUT"
       # GITHUB_TOKEN 으로 만든 PR 은 CI 워크플로를 트리거하지 않으므로 여기서 검증한다
       - run: cargo test --workspace
-      - uses: peter-evans/create-pull-request@v8
+      - if: steps.bump.outputs.version != ''
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/update-holiday-data
-          commit-message: "chore: 공휴일 데이터 갱신"
-          title: "chore: 공휴일 데이터 갱신"
-          body: "data.go.kr 특일 정보에서 자동 생성한 `src/data.rs` 변경입니다. diff 를 확인하고 머지하세요."
+          commit-message: "chore: 공휴일 데이터 갱신 (v${{ steps.bump.outputs.version }})"
+          title: "chore: 공휴일 데이터 갱신 (v${{ steps.bump.outputs.version }})"
+          body: |
+            data.go.kr 특일 정보에서 자동 생성한 `src/data.rs` 변경과 패치 버전 업입니다.
+            `src/data.rs` diff 를 확인하고 머지하면 v${{ steps.bump.outputs.version }} 이 crates.io 에 배포됩니다.
           delete-branch: true

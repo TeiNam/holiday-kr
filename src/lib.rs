@@ -13,6 +13,9 @@
 //! assert_eq!(is_holiday(1999, 1, 1), None);
 //! ```
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
 mod data;
 
 /// 내장 데이터의 첫 연도.
@@ -32,14 +35,17 @@ pub struct Holiday {
 }
 
 impl Holiday {
+    /// 연도
     pub const fn year(&self) -> u16 {
         (self.locdate / 10000) as u16
     }
 
+    /// 월 (1~12)
     pub const fn month(&self) -> u8 {
         (self.locdate / 100 % 100) as u8
     }
 
+    /// 일 (1~31)
     pub const fn day(&self) -> u8 {
         (self.locdate % 100) as u8
     }
@@ -104,7 +110,12 @@ mod tests {
         assert_eq!(holidays_on(2027, 5, 1)[0].name, "근로자의 날");
         assert_eq!(holidays_on(2027, 5, 3)[0].name, "대체공휴일(근로자의 날)");
         assert_eq!(holidays_on(2027, 12, 27)[0].name, "대체공휴일(성탄절)");
-        let has_raw_name = |h: &Holiday| h.name.contains("기독탄신일") || h.name.contains("노동절");
+        assert_eq!(holidays_in_month(2004, 1)[0].name, "1월1일");
+        let has_raw_name = |h: &Holiday| {
+            ["기독탄신일", "노동절", "신정"]
+                .iter()
+                .any(|n| h.name.contains(n))
+        };
         assert!(!data::HOLIDAYS.iter().any(has_raw_name));
     }
 
