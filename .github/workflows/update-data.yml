@@ -1,0 +1,31 @@
+# 매주 data.go.kr 에서 공휴일을 다시 받아, 바뀐 게 있으면 PR 을 연다 (임시공휴일 반영용).
+name: Update holiday data
+
+on:
+  schedule:
+    - cron: "0 18 * * 0" # 매주 월요일 03:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Regenerate src/data.rs
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+        run: cargo run -p gen
+      # GITHUB_TOKEN 으로 만든 PR 은 CI 워크플로를 트리거하지 않으므로 여기서 검증한다
+      - run: cargo test --workspace
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          branch: chore/update-holiday-data
+          commit-message: "chore: 공휴일 데이터 갱신"
+          title: "chore: 공휴일 데이터 갱신"
+          body: "data.go.kr 특일 정보에서 자동 생성한 `src/data.rs` 변경입니다. diff 를 확인하고 머지하세요."
+          delete-branch: true
