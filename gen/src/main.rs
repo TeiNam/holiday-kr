@@ -17,7 +17,12 @@ const MAX_YEARS_AHEAD: u16 = 5;
 const NUM_OF_ROWS: &str = "100";
 
 /// 공공 API 명칭 → 저장용 명칭. 부분 치환이라 "대체공휴일(노동절)" 도 함께 바뀐다.
-const NAME_REPLACEMENTS: [(&str, &str); 2] = [("기독탄신일", "성탄절"), ("노동절", "근로자의 날")];
+/// 1월 1일은 연도에 따라 "신정"/"1월1일" 로 섞여 와서 "1월1일" 로 통일한다.
+const NAME_REPLACEMENTS: [(&str, &str); 3] = [
+    ("기독탄신일", "성탄절"),
+    ("노동절", "근로자의 날"),
+    ("신정", "1월1일"),
+];
 
 #[derive(Debug, PartialEq)]
 struct Row {
@@ -199,6 +204,7 @@ mod tests {
             normalize_name("대체공휴일(노동절)"),
             "대체공휴일(근로자의 날)"
         );
+        assert_eq!(normalize_name("신정"), "1월1일");
         assert_eq!(normalize_name("설날"), "설날");
     }
 
